@@ -3,6 +3,7 @@
 #define BLYNK_FIRMWARE_VERSION        "1.0.0"
 //#define BLYNK_AUTH_TOKEN "smyXCNBNUSn-1C4dmApjgNSIRPt3bLwx"
  
+char aut[] = "";
 int  toggleState_1;
 unsigned long time1 = 0;
 //#define BLYNK_PRINT Serial
