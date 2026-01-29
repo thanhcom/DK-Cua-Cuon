@@ -137,7 +137,7 @@ void setup() {
   // Mỗi lần thử đợi tối đa 20 giây
   wifiManager.setConnectTimeout(30);
   // Nếu sau 5 lần thử (khoảng hơn 1 phút) mà vẫn tạch, 
-  // thì phát AP cấu hình trong 60 giây rồi restart tìm lại từ đầu
+  // thì phát AP cấu hình trong 180 giây rồi restart tìm lại từ đầu
   wifiManager.setConfigPortalTimeout(180);
   bool res;
   res = wifiManager.autoConnect("Thanh Trang Electronic", "");
