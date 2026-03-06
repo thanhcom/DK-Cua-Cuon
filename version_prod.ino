@@ -211,16 +211,9 @@ void loop() {
     client.publish("blynk/checkstatus", String(random(0xffff)).c_str());
     time1 = millis();
   }
-  if (time1 < 0) {
-    time1 = millis();
-  }
-
-  //Blynk.run();
   if (WiFi.status() != WL_CONNECTED) {
-    delay(50000);
-    ESP.restart();
+    WiFi.reconnect();
   }
-
   if (!client.connected()) {
     reconnect();
   }
