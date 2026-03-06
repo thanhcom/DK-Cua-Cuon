@@ -1,3 +1,12 @@
+//Mục tiêu của template này:
+//-✅ WiFiManager cấu hình WiFi
+//-✅ MQTT config qua web
+//-✅ SPIFFS lưu config
+//-✅ OTA update
+//-✅ Task scheduler bằng millis
+//-✅ MQTT auto reconnect
+//-✅ watchdog safe
+//-✅ log debug
 #include <ESP8266WiFi.h>
 #include <WiFiManager.h>
 #include <PubSubClient.h>
