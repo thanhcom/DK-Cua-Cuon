@@ -7,12 +7,12 @@
 #include <RCSwitch.h>
 DHT12 dht12;
 RCSwitch mySwitch = RCSwitch();
-int toggleState_1;
+uint8_t toggleState_1;
 unsigned long time1 = 0;
 char mqtt_server[40];
 char mqtt_port[6];
 char api_token[34] = "YOUR_API_TOKEN";
-char time_delay[6]="100";
+char time_delay[6] = "100";
 
 //flag for saving data
 bool shouldSaveConfig = false;
@@ -76,166 +76,176 @@ PubSubClient client(espClient);
 
 void setup() {
   Serial.begin(9600);
+  randomSeed(micros());
+
   dht12.begin();
-  //delay(atoi(mqtt_port));
 
+  // =========================
+  // Mount SPIFFS + đọc config
+  // =========================
   if (SPIFFS.begin()) {
-    Serial.println("mounted file system");
+    Serial.println(F("SPIFFS mounted"));
+
     if (SPIFFS.exists("/config.json")) {
-      //file exists, reading and loading
-      Serial.println("reading config file");
       File configFile = SPIFFS.open("/config.json", "r");
+
       if (configFile) {
-        Serial.println("opened config file");
         size_t size = configFile.size();
-        // Allocate a buffer to store contents of the file.
-        std::unique_ptr<char[]> buf(new char[size]);
 
-        configFile.readBytes(buf.get(), size);
+        if (size > 0 && size < 1024) {
+          std::unique_ptr<char[]> buf(new char[size + 1]);
+          configFile.readBytes(buf.get(), size);
+          buf[size] = '\0';
 
-#if defined(ARDUINOJSON_VERSION_MAJOR) && ARDUINOJSON_VERSION_MAJOR >= 6
-        DynamicJsonDocument json(1024);
-        auto deserializeError = deserializeJson(json, buf.get());
-        serializeJson(json, Serial);
-        if (!deserializeError) {
-#else
-        DynamicJsonBuffer jsonBuffer;
-        JsonObject& json = jsonBuffer.parseObject(buf.get());
-        json.printTo(Serial);
-        if (json.success()) {
-#endif
-          Serial.println("\nparsed json");
-          strcpy(mqtt_server, json["mqtt_server"]);
-          strcpy(mqtt_port, json["mqtt_port"]);
-          strcpy(api_token, json["api_token"]);
-          strcpy(time_delay, json["time_delay"]);
-        } else {
-          Serial.println("failed to load json config");
+          DynamicJsonDocument json(512);
+          DeserializationError err = deserializeJson(json, buf.get());
+
+          if (!err) {
+            strlcpy(mqtt_server, json["mqtt_server"] | "", sizeof(mqtt_server));
+            strlcpy(mqtt_port, json["mqtt_port"] | "", sizeof(mqtt_port));
+            strlcpy(api_token, json["api_token"] | "", sizeof(api_token));
+            strlcpy(time_delay, json["time_delay"] | "", sizeof(time_delay));
+
+            Serial.println(F("Config loaded"));
+          } else {
+            Serial.println(F("Failed to parse config"));
+          }
         }
+
         configFile.close();
       }
     }
   } else {
-    Serial.println("failed to mount FS");
+    Serial.println(F("SPIFFS mount failed"));
   }
 
-  WiFiManagerParameter custom_mqtt_server("server", "mqtt server", mqtt_server, 40);
-  WiFiManagerParameter custom_mqtt_port("port", "mqtt port", mqtt_port, 6);
-  WiFiManagerParameter custom_api_token("apikey", "API token", api_token, 32);
-  WiFiManagerParameter custom_api_time("time", "API token", time_delay, 6);
+  // =========================
+  // WiFiManager
+  // =========================
+  WiFiManagerParameter custom_mqtt_server("server", "mqtt server", mqtt_server, sizeof(mqtt_server));
+  WiFiManagerParameter custom_mqtt_port("port", "mqtt port", mqtt_port, sizeof(mqtt_port));
+  WiFiManagerParameter custom_api_token("apikey", "API token", api_token, sizeof(api_token));
+  WiFiManagerParameter custom_api_time("time", "time delay", time_delay, sizeof(time_delay));
 
-
-  //WiFi.mode(WIFI_STA);  // explicitly set mode, esp defaults to STA+AP
   WiFiManager wifiManager;
+
   wifiManager.setSaveConfigCallback(saveConfigCallback);
+
   wifiManager.addParameter(&custom_mqtt_server);
   wifiManager.addParameter(&custom_mqtt_port);
   wifiManager.addParameter(&custom_api_token);
   wifiManager.addParameter(&custom_api_time);
-  // Thử kết nối lại 5 lần, mỗi lần cách nhau một khoảng
-  wifiManager.setConnectRetries(5);   
-  // Mỗi lần thử đợi tối đa 20 giây
+
+  wifiManager.setConnectRetries(5);
   wifiManager.setConnectTimeout(30);
-  // Nếu sau 5 lần thử (khoảng hơn 1 phút) mà vẫn tạch, 
-  // thì phát AP cấu hình trong 180 giây rồi restart tìm lại từ đầu
   wifiManager.setConfigPortalTimeout(180);
-  bool res;
-  res = wifiManager.autoConnect("Thanh Trang Electronic", "");
-  if (!res) {
+
+  if (!wifiManager.autoConnect("Thanh Trang Electronic", "")) {
     ESP.restart();
   }
 
-  strcpy(mqtt_server, custom_mqtt_server.getValue());
-  strcpy(mqtt_port, custom_mqtt_port.getValue());
-  strcpy(api_token, custom_api_token.getValue());
-  strcpy(time_delay, custom_api_time.getValue());
-  Serial.println("The values in the file are: ");
-  Serial.println("\tmqtt_server : " + String(mqtt_server));
-  Serial.println("\tmqtt_port : " + String(mqtt_port));
-  Serial.println("\tapi_token : " + String(api_token));
-  Serial.println("\ttime_delay : " + String(time_delay));
+  // =========================
+  // Lấy config từ portal
+  // =========================
+  strlcpy(mqtt_server, custom_mqtt_server.getValue(), sizeof(mqtt_server));
+  strlcpy(mqtt_port, custom_mqtt_port.getValue(), sizeof(mqtt_port));
+  strlcpy(api_token, custom_api_token.getValue(), sizeof(api_token));
+  strlcpy(time_delay, custom_api_time.getValue(), sizeof(time_delay));
+
+  Serial.println(F("Current config:"));
+  Serial.printf("mqtt_server : %s\n", mqtt_server);
+  Serial.printf("mqtt_port   : %s\n", mqtt_port);
+  Serial.printf("api_token   : %s\n", api_token);
+  Serial.printf("time_delay  : %s\n", time_delay);
+
+  // =========================
+  // Save config nếu cần
+  // =========================
   if (shouldSaveConfig) {
-    Serial.println("saving config");
-#if defined(ARDUINOJSON_VERSION_MAJOR) && ARDUINOJSON_VERSION_MAJOR >= 6
-    DynamicJsonDocument json(1024);
-#else
-    DynamicJsonBuffer jsonBuffer;
-    JsonObject& json = jsonBuffer.createObject();
-#endif
+    DynamicJsonDocument json(512);
+
     json["mqtt_server"] = mqtt_server;
     json["mqtt_port"] = mqtt_port;
     json["api_token"] = api_token;
     json["time_delay"] = time_delay;
 
     File configFile = SPIFFS.open("/config.json", "w");
-    if (!configFile) {
-      Serial.println("failed to open config file for writing");
-    }
 
-#if defined(ARDUINOJSON_VERSION_MAJOR) && ARDUINOJSON_VERSION_MAJOR >= 6
-    serializeJson(json, Serial);
-    serializeJson(json, configFile);
-#else
-    json.printTo(Serial);
-    json.printTo(configFile);
-#endif
-    configFile.close();
-    //end save
+    if (configFile) {
+      serializeJson(json, configFile);
+      configFile.close();
+      Serial.println(F("Config saved"));
+    } else {
+      Serial.println(F("Failed to save config"));
+    }
   }
 
-
-
+  // =========================
+  // GPIO
+  // =========================
+  pinMode(D4, OUTPUT);
   pinMode(D5, OUTPUT);
   pinMode(D6, OUTPUT);
   pinMode(D7, OUTPUT);
-  pinMode(D4, OUTPUT);
+
   mySwitch.enableTransmit(D8);
 
-  client.setServer(mqtt_server, atoi(mqtt_port));
+  // =========================
+  // MQTT
+  // =========================
+  int port = atoi(mqtt_port);
+  if (port <= 0) {
+    port = 1883;
+  }
+
+  client.setServer(mqtt_server, port);
   client.setCallback(callback);
 
-  String str = "Arduino start :" + String(random(0xffff), HEX);
-  if (client.connect(str.c_str(), "thanhcom", "laodaicaha")) {
+  reconnect();
+}
+
+void loop() {
+  if (WiFi.status() != WL_CONNECTED) {
+    WiFi.reconnect();
+    delay(100);
+    return;
+  }
+  if (!client.connected()) {
+    reconnect();
+    return;
+  }
+  client.loop();
+
+  if ((unsigned long)(millis() - time1) >= 10000) {
+    digitalWrite(D4, !digitalRead(D4));
+    char buf[32];
+    snprintf(buf, sizeof(buf), "%d", WiFi.RSSI());
+    client.publish("blynk/rssid", buf);
+    dtostrf(dht12.getTemperature(), 0, 2, buf);
+    client.publish("blynk/temp", buf);
+    dtostrf(dht12.getHumidity(), 0, 2, buf);
+    client.publish("blynk/humi", buf);
+    snprintf(buf, sizeof(buf), "%u", random(0xffff));
+    client.publish("blynk/checkstatus", buf);
+    time1 = millis();
+  }
+}
+
+void reconnect() {
+  static unsigned long lastAttempt = 0;
+  if (client.connected()) return;
+  if (WiFi.status() != WL_CONNECTED) return;
+  unsigned long now = millis();
+  if (now - lastAttempt < 5000) return;
+  lastAttempt = now;
+  char clientId[32];
+  snprintf(clientId, sizeof(clientId), "ESP8266Client-%04X", random(0xFFFF));
+  if (client.connect(clientId, "thanhcom", "laodaicaha")) {
     client.setKeepAlive(300);
     client.subscribe("blynk/cmactive");
   }
 }
 
-void loop() {
-  // put your main code here, to run repeatedly:
-  if ((unsigned long)(millis() - time1) > 10000) {
-    digitalWrite(D4, !digitalRead(D4));
-    client.publish("blynk/rssid", String(WiFi.RSSI()).c_str());
-    client.publish("blynk/temp", String(dht12.readTemperature()).c_str());
-    client.publish("blynk/humi", String(dht12.readHumidity()).c_str());    
-    client.publish("blynk/checkstatus", String(random(0xffff)).c_str());
-    time1 = millis();
-  }
-  if (WiFi.status() != WL_CONNECTED) {
-    WiFi.reconnect();
-  }
-  if (!client.connected()) {
-    reconnect();
-  }
-  client.loop();
-}
-
-void reconnect() {
-  // Loop until we're reconnected
-  while (!client.connected()) {
-    String clientId = "ESP8266Client-";
-    clientId += String(random(0xffff), HEX);
-    // Attempt to connect
-    if (client.connect(clientId.c_str(), "thanhcom", "laodaicaha")) {
-      client.setKeepAlive(300);
-      client.subscribe("blynk/cmactive");
-    } else {
-      // Wait 5 seconds before retrying
-      delay(5000);
-    }
-  }
-}
-
-void SendCm(String str) {
-  client.publish("blynk/cm", str.c_str());
+void SendCm(const char* msg) {
+  client.publish("blynk/cm", msg);
 }
